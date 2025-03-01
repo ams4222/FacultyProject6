@@ -3,7 +3,9 @@ from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
 from webdriver_manager.firefox import GeckoDriverManager
 from selenium.webdriver.firefox.service import Service
+from selenium.webdriver.common.keys import Keys
 import subprocess
+import time
 
 # SOCKS5 Proxy Configuration
 SOCKS_PROXY_HOST = "127.0.0.1"
@@ -46,6 +48,16 @@ try:
     for website in websites:
         driver.get(website)
         print(f"Visited: {website} - Title: {driver.title}")
+
+    driver.get("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    video = driver.find_element(By.XPATH, "//*[@id=\"thumbnail\"]")
+    video = driver.find_element(By.ID, "movie_player")
+    video.send_keys(Keys.SPACE)
+    time.sleep(2)
+    video.click()
+    time.sleep(2)
+    print("Video played")
+
 finally:
     driver.quit()
-
