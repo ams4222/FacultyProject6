@@ -50,56 +50,55 @@ model = keras.models.Sequential()
 
 
 #This model WIP, basic one that can run the tik_tok datasets
+# Input Layer
 model.add(layers.Input((160, 1)))
 
 # First Convolutional Block
-model.add(layers.Conv1D(filters=8, kernel_size=8, strides=1))
+model.add(layers.Conv1D(filters=8, kernel_size=8, strides=1, padding='same'))
 model.add(layers.BatchNormalization())
 model.add(layers.ELU())
-model.add(layers.MaxPooling1D())
+model.add(layers.MaxPooling1D(pool_size=2))
 
 # Second Convolutional Block
-model.add(layers.Conv1D(filters=16, kernel_size=8, strides=1))
+model.add(layers.Conv1D(filters=16, kernel_size=8, strides=1, padding='same'))
 model.add(layers.BatchNormalization())
 model.add(layers.ELU())
-model.add(layers.MaxPooling1D())
+model.add(layers.MaxPooling1D(pool_size=2))
 
 # Third Convolutional Block
-model.add(layers.Conv1D(filters=32, kernel_size=4, strides=1))
+model.add(layers.Conv1D(filters=32, kernel_size=4, strides=1, padding='same'))
 model.add(layers.BatchNormalization())
 model.add(layers.ELU())
-model.add(layers.MaxPooling1D())
+model.add(layers.MaxPooling1D(pool_size=2))
 
 # Global Average Pooling
 model.add(layers.GlobalAveragePooling1D())
 
-# Fully Connected Layers
-model.add(layers.Dense(512, activation='relu'))
+# Fully Connected Layers (reduced size and dropout increased slightly)
+model.add(layers.Dense(256, activation='relu'))
 model.add(layers.BatchNormalization())
-model.add(layers.Dropout(0.3))
+model.add(layers.Dropout(0.5))
+
+model.add(layers.Dense(256, activation='relu'))
+model.add(layers.BatchNormalization())
+model.add(layers.Dropout(0.5))
 
 
-model.add(layers.Dense(512, activation='relu'))
-model.add(layers.BatchNormalization())
-model.add(layers.Dropout(0.4))
-
-model.add(layers.Dense(512, activation='relu'))
-model.add(layers.BatchNormalization())
-model.add(layers.Dropout(0.3))
 # Output Layer
 model.add(layers.Dense(num_classes, activation='softmax'))
 
 # Summary of the model
 model.summary()
 
+opt = keras.optimizers.Adam(learning_rate=0.001)
 
 #compilation
-model.compile(optimizer='adam',
+model.compile(optimizer="adam",
               loss='categorical_crossentropy',
               metrics=['accuracy'])
 
 #training
-model.fit(X_train, Y_train, epochs=5, batch_size=2, validation_data=(X_valid, Y_valid))
+model.fit(X_train, Y_train, epochs=10, batch_size=32, validation_data=(X_valid, Y_valid))
 
 #evaluation
 #test_loss, test_acc = model.evaluate(X_test, Y_test, verbose=0)
