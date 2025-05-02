@@ -1,197 +1,208 @@
-from dotenv import load_dotenv
+# ──────────────────────────────────────────────────────────────────────────────
+# Imports
+# ──────────────────────────────────────────────────────────────────────────────
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-import keras
-from keras import layers, utils, preprocessing
+
 import numpy as np
+import pandas as pd
 import pickle
-from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
+
+from keras import Input, Model, layers, utils, optimizers
 from sklearn.utils import shuffle
 from sklearn.model_selection import train_test_split
-from collections import Counter
-
-
-load_dotenv()
-
-
-'''
-with open(os.getenv("UNDEFENDED_X_TE"), 'rb') as file:
-    X_te = pickle.load(file)
-
-with open(os.getenv("UNDEFENDED_X_TR"), 'rb') as file:
-    X_tr = pickle.load(file)
-
-with open(os.getenv("UNDEFENDED_X_VL"), 'rb') as file:
-    X_vl = pickle.load(file)
-
-with open(os.getenv("UNDEFENDED_Y_TE"), 'rb') as file:
-    Y_te = pickle.load(file)
-
-with open(os.getenv("UNDEFENDED_Y_TR"), 'rb') as file:
-    Y_tr = pickle.load(file)
-
-with open(os.getenv("UNDEFENDED_Y_VL"), 'rb') as file:
-    Y_vl = pickle.load(file)
-
-
-print(X_te)
-
-X_train = np.array(X_tr)
-y_train = np.array(Y_tr)
-X_valid = np.array(X_vl)
-y_valid = np.array(Y_vl)
-X_test = np.array(X_te)
-y_test = np.array(Y_te)
-
-print(y_valid[0:50])
-
-num_classes = 100
-Y_train = utils.to_categorical(y_train, num_classes=num_classes)
-Y_valid = utils.to_categorical(y_valid, num_classes=num_classes)
-Y_test = utils.to_categorical(y_test, num_classes=num_classes)
-
-print(X_valid[0:50])
-'''
-
-with open('./all_sequences.pkl', 'rb') as f:
-        x_data = pickle.load(f)
-
-with open('./all_sequences_pickle.pkl', 'rb') as f:
-        y_data = pickle.load(f)
-
-
-normal_data = [item[1] for item in x_data]
-tor_data = [item[1] for item in y_data]
-
-
-
-x_data = []
-y_data = []
-
-for dataset in normal_data:
-    x_data.extend(dataset)
-
-for dataset in tor_data:
-    y_data.extend(dataset)
-
-
-labels_chunk_1 = [0] * len(x_data)
-labels_chunk_2 = [1] * len(y_data)
-
-
-combined_data = x_data + y_data
-combined_labels = labels_chunk_1 + labels_chunk_2
-
-
-clean_data = [(float(ts), val) for ts, val in combined_data]
-np_data = np.array(clean_data)
-np_labels = np.array(combined_labels)
-
-shuffled_data, shuffled_labels = shuffle(np_data, np_labels, random_state=42)
-
-num_classes = 2
-
-Y_data = utils.to_categorical(shuffled_labels, num_classes)
-
-
-X_train, X_temp, Y_train, Y_temp = train_test_split(
-    shuffled_data, shuffled_labels,
-    test_size=0.3,
-    random_state=42,
+from sklearn.metrics import (
+    classification_report, confusion_matrix, roc_curve,
+    precision_recall_curve, auc
 )
 
-X_val, X_test, Y_val, Y_test = train_test_split(
-    X_temp, Y_temp,
-    test_size=0.5,  # half of 30% = 15%
-    random_state=42,
-)
+# ──────────────────────────────────────────────────────────────────────────────
+# Configuration
+# ──────────────────────────────────────────────────────────────────────────────
+FILE_NORMAL = './all_sequences.pkl'
+FILE_TOR    = './all_sequences.pkl'
 
+SEQUENCE_LENGTH = 5000
+NUM_CLASSES     = 2
+BATCH_SIZE      = 32
+EPOCHS          = 100
+TEST_SIZE       = 0.30
+VAL_SIZE        = 0.50
+LEARNING_RATE   = 1e-4
+RANDOM_STATE    = 42
 
-X_train = np.array(X_train)
-X_val = np.array(X_val)
-X_test = np.array(X_test)
-Y_train = np.array(Y_train)
-Y_val = np.array(Y_val)
-Y_test = np.array(Y_test)
+# ──────────────────────────────────────────────────────────────────────────────
+# Data Utilities
+# ──────────────────────────────────────────────────────────────────────────────
+def load_sequences(pickle_path):
+    """Load a pickle of (id, sequence) items and return list of sequences."""
+    with open(pickle_path, 'rb') as f:
+        data = pickle.load(f)
+    return [item[1] for item in data]
 
-Y_train = utils.to_categorical(Y_train, num_classes)
-Y_val = utils.to_categorical(Y_val, num_classes)
-Y_test = utils.to_categorical(Y_test, num_classes)
+def create_dataset(normal_path, tor_path, seq_len):
+    """Loads data, applies labels, and pads/truncates sequences."""
+    normal = load_sequences(normal_path)
+    tor = load_sequences(tor_path)
 
-print(f"X_train: {X_train.shape}, Y_train: {Y_train.shape}")
-#print(f"X_val: {X_val.shape}, Y_val: {Y_val.shape}")
-print(f"X_test: {X_test.shape}, Y_test: {Y_test.shape}")
+    X_raw = normal + tor
+    y_raw = [0] * len(normal) + [1] * len(tor)
 
-model = keras.models.Sequential()
+    X = []
+    for seq in X_raw:
+        seq = [(float(ts), float(val)) for ts, val in seq]
+        padded = seq + [(0.0, 0.0)] * (seq_len - len(seq)) if len(seq) < seq_len else seq[:seq_len]
+        X.append(padded)
 
+    return np.array(X, dtype=np.float32), np.array(y_raw, dtype=np.int32)
 
-#This model WIP, basic one that can run the tik_tok datasets
-# Input Layer
-model.add(layers.Input((5000, 2)))
+def split_and_encode(X, y, test_size, val_size, num_classes):
+    """Shuffles, splits, and one-hot encodes dataset."""
+    X, y = shuffle(X, y, random_state=RANDOM_STATE)
+    y_cat = utils.to_categorical(y, num_classes)
 
-# First Convolutional Block
-model.add(layers.Conv1D(filters=8, kernel_size=8, strides=1, padding='same'))
-model.add(layers.BatchNormalization())
-model.add(layers.ELU())
-model.add(layers.MaxPooling1D(pool_size=2))
+    X_train, X_tmp, y_train, y_tmp = train_test_split(X, y_cat, test_size=test_size, random_state=RANDOM_STATE)
+    X_val, X_test, y_val, y_test = train_test_split(X_tmp, y_tmp, test_size=val_size, random_state=RANDOM_STATE)
+    return X_train, X_val, X_test, y_train, y_val, y_test
 
-# Second Convolutional Block
-model.add(layers.Conv1D(filters=16, kernel_size=8, strides=1, padding='same'))
-model.add(layers.BatchNormalization())
-model.add(layers.ELU())
-model.add(layers.MaxPooling1D(pool_size=2))
+def augment_data(X, noise_factor=0.01):
+    """Adds Gaussian noise to training data."""
+    noise = np.random.normal(0, noise_factor, X.shape)
+    return X + noise
 
-# Third Convolutional Block
-model.add(layers.Conv1D(filters=32, kernel_size=4, strides=1, padding='same'))
-model.add(layers.BatchNormalization())
-model.add(layers.ELU())
-model.add(layers.MaxPooling1D(pool_size=2))
+# ──────────────────────────────────────────────────────────────────────────────
+# Model Definition
+# ──────────────────────────────────────────────────────────────────────────────
+def build_model(seq_len, num_classes):
+    inputs = Input(shape=(seq_len, 2))
 
-# Global Average Pooling
-model.add(layers.GlobalAveragePooling1D())
+    x = layers.Conv1D(32, 4, padding='same')(inputs)
+    x = layers.MaxPooling1D(2)(x)
 
-# Fully Connected Layers (reduced size and dropout increased slightly)
-model.add(layers.Dense(256, activation='relu'))
-model.add(layers.BatchNormalization())
-model.add(layers.Dropout(0.5))
+    x = layers.Conv1D(64, 4, padding='same')(x)
+    x = layers.MaxPooling1D(2)(x)
 
-model.add(layers.Dense(256, activation='relu'))
-model.add(layers.BatchNormalization())
-model.add(layers.Dropout(0.5))
+    x = layers.Conv1D(128, 4, padding='same')(x)
+    x = layers.MaxPooling1D(2)(x)
 
+    x = layers.GlobalAveragePooling1D()(x)
+    x = layers.Dense(512, activation='relu')(x)
+    x = layers.Dropout(0.5)(x)
 
-# Output Layer
-model.add(layers.Dense(num_classes, activation='softmax'))
+    x = layers.Dense(512, activation='relu')(x)
+    x = layers.Dropout(0.3)(x)
 
-# Summary of the model
-#model.summary()
+    outputs = layers.Dense(num_classes, activation='softmax')(x)
+    return Model(inputs, outputs)
 
-opt = keras.optimizers.Adam(learning_rate=0.001)
+# ──────────────────────────────────────────────────────────────────────────────
+# Main Training & Evaluation Pipeline
+# ──────────────────────────────────────────────────────────────────────────────
+def main():
+    # Load and prepare data
+    X, y = create_dataset(FILE_NORMAL, FILE_TOR, SEQUENCE_LENGTH)
+    X_train, X_val, X_test, y_train, y_val, y_test = split_and_encode(X, y, TEST_SIZE, VAL_SIZE, NUM_CLASSES)
+    X_train = augment_data(X_train)
+    X_val = augment_data(X_val)
 
-#compilation
-model.compile(optimizer="adam",
-              loss='categorical_crossentropy',
-              metrics=['accuracy'])
+    print(f"Shapes — X_train: {X_train.shape}, Y_train: {y_train.shape}")
+    print(f"           X_val:   {X_val.shape},   Y_val:   {y_val.shape}")
+    print(f"           X_test:  {X_test.shape},   Y_test:  {y_test.shape}")
 
-#training
+    # Build and train model
+    model = build_model(SEQUENCE_LENGTH, NUM_CLASSES)
+    model.compile(optimizer=optimizers.Adam(LEARNING_RATE), loss='categorical_crossentropy', metrics=['accuracy'])
+    model.summary()
 
+    history = model.fit(
+        X_train, y_train,
+        epochs=EPOCHS,
+        batch_size=BATCH_SIZE,
+        validation_data=(X_val, y_val)
+    )
 
-sequence_length = 5000
+    # Evaluation
+    loss, acc = model.evaluate(X_test, y_test, verbose=0)
+    y_pred_proba = model.predict(X_test)
+    y_pred = np.argmax(y_pred_proba, axis=1)
+    y_true = np.argmax(y_test, axis=1)
 
-# Calculate the number of full sequences that can be made from the available data
-num_sequences = len(X_train) // sequence_length
-# Reshape X_train into sequences of 160 time steps, each with 2 features
-X_train_reshaped = X_train[:num_sequences * sequence_length].reshape(-1, sequence_length, 2)
-X_val_reshaped = X_train[:num_sequences * sequence_length].reshape(-1, sequence_length, 2)
-# If Y_train is a single label per sample (e.g., for classification), we also reshape it.
-# Assuming your Y_train is structured similarly to X_train but with 1 label per sample
-Y_train_reshaped = Y_train[:num_sequences]
-Y_val_reshaped = Y_train[:num_sequences]
+    print("\nClassification Report:")
+    print(classification_report(y_true, y_pred, digits=4))
 
-print(X_train.shape)
-print(Y_train.shape)
-model.fit(X_train_reshaped, Y_train_reshaped, epochs=20, batch_size=5, validation_data=(X_val_reshaped, Y_val_reshaped))
+    cm = confusion_matrix(y_true, y_pred)
+    TN, FP, FN, TP = cm.ravel()
+    print(f"\nConfusion Matrix:\n{cm}")
 
-#evaluation
-#test_loss, test_acc = model.evaluate(X_test, Y_test, verbose=0)
-#print("Test accuracy: ", test_acc)
+    precision = TP / (TP + FP) if (TP + FP) else 0
+    recall = TP / (TP + FN) if (TP + FN) else 0
+    fpr = FP / (FP + TN) if (FP + TN) else 0
+
+    print(f"\nPrecision: {precision:.4f}")
+    print(f"Recall (TPR): {recall:.4f}")
+    print(f"False Positive Rate (FPR): {fpr:.4f}")
+    print(f"Test Accuracy: {acc:.4f}")
+
+    roc_fpr, roc_tpr, _ = roc_curve(y_true, y_pred_proba[:, 1])
+    pr_prec, pr_rec, _ = precision_recall_curve(y_true, y_pred_proba[:, 1])
+    roc_auc = auc(roc_fpr, roc_tpr)
+    pr_auc = auc(pr_rec, pr_prec)
+
+    summary_df = pd.DataFrame({
+        'Metric': ['Accuracy', 'Precision', 'Recall (TPR)', 'FPR', 'ROC AUC', 'PR AUC'],
+        'Value': [acc, precision, recall, fpr, roc_auc, pr_auc]
+    })
+    print("\nKey Evaluation Metrics:")
+    print(summary_df.to_string(index=False, float_format='%.4f'))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Plots
+    # ──────────────────────────────────────────────────────────────────────────
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(roc_fpr, roc_tpr, label=f"AUC = {roc_auc:.4f}")
+    plt.plot([0, 1], [0, 1], '--', color='gray')
+    plt.title("ROC Curve")
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.legend()
+    plt.grid(True)
+
+    plt.subplot(1, 2, 2)
+    plt.plot(pr_rec, pr_prec, label=f"AUC = {pr_auc:.4f}", color='green')
+    plt.title("Precision-Recall Curve")
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    # Accuracy & Loss
+    plt.figure(figsize=(12, 5))
+    plt.subplot(1, 2, 1)
+    plt.plot(history.history['accuracy'], label='Train Acc')
+    plt.plot(history.history['val_accuracy'], label='Val Acc')
+    plt.title("Accuracy Over Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy")
+    plt.legend()
+    plt.grid(True)
+
+    plt.subplot(1, 2, 2)
+    plt.plot(history.history['loss'], label='Train Loss')
+    plt.plot(history.history['val_loss'], label='Val Loss')
+    plt.title("Loss Over Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Entry Point
+# ──────────────────────────────────────────────────────────────────────────────
+if __name__ == '__main__':
+    main()
