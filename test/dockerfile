@@ -1,0 +1,49 @@
+# Use the official Ubuntu base image
+FROM ubuntu:25.04
+
+# Set non-interactive mode for apt-get
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Update package lists and install necessary packages
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip tor privoxy openvpn tcpdump curl \
+    libnss3 libxss1 libatk-bridge2.0-0 libx11-xcb1 libgbm1 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy the requirements file and install Python packages
+COPY requirements.txt /app/requirements.txt
+RUN pip3 install --break-system-packages --no-cache-dir -r /app/requirements.txt
+RUN playwright install --with-deps chromium
+
+# Configure Tor: enable SocksPort 9050 and ControlPort 9051
+RUN sed -i '/^#SocksPort 9050/c\SocksPort 9050' /etc/tor/torrc && \
+    sed -i '/^#ControlPort 9051/c\ControlPort 9051' /etc/tor/torrc && \
+    service tor restart
+
+# Configure Privoxy to forward HTTP traffic to Tor
+RUN echo 'forward-socks5t / 127.0.0.1:9050 .' >> /etc/privoxy/config && \
+    service privoxy restart
+
+# Copy the OpenVPN client configuration file
+COPY OpenVPNClient.ovpn /etc/openvpn/client.conf
+COPY login.conf /etc/openvpn/login.conf
+
+# Ensure that no lingering Chromium processes are running
+RUN pkill -f chromium
+
+# Copy the Python web searching script
+COPY Client.py /app/search_script.py
+RUN mkdir /app/pcap
+
+# Copy the start bash script
+COPY start.sh /app/start.sh
+COPY restart_tor.sh /app/restart_tor.sh
+
+# Copy domains.csv
+COPY domains.csv /app/domains.csv
+
+# Start packet capture and run the Python script
+#CMD service tor start & service privoxy start & tcpdump -i any -w /app/traffic.pcap & python3 /app/search_script.py
+#CMD service tor start & service privoxy start & python3 /app/search_script.py
+CMD bash /app/start.sh && python3 /app/search_script.py
